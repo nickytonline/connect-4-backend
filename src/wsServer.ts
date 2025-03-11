@@ -1,5 +1,7 @@
 import { WebSocketServer } from 'ws';
+import type { WebSocket } from 'ws';
 import { Client, Connection } from '@temporalio/client';
+import { TASK_QUEUE_NAME } from './utils';
 
 const wss = new WebSocketServer({ port: 8080 });
 let temporalClient: Client;
@@ -15,14 +17,55 @@ async function initializeTemporalClient() {
   });
 }
 
+interface StartGameAction {
+  type: 'START_GAME';
+  gameId: string;
+}
+
+interface JoinGameAction {
+  type: 'JOIN_GAME';
+  playerName: string;
+}
+
+interface MakeMoveAction {
+  type: 'MAKE_MOVE';
+  x: number;
+  y: number;
+}
+
+interface ExplodePieceAction {
+  type: 'EXPLODE_PIECE';
+  x: number;
+  y: number;
+}
+
+type ActionType = StartGameAction | JoinGameAction | MakeMoveAction | ExplodePieceAction;
+
+async function startGame({ ws, action }: { ws: WebSocket; action: StartGameAction }) {
+  const handle = await temporalClient.workflow.start('start-game', {
+    taskQueue: TASK_QUEUE_NAME,
+    workflowId: action.gameId,
+  });
+
+  ws.send(
+    JSON.stringify({
+      type: 'GAME_STARTED',
+      workflowId: handle.workflowId,
+    }),
+  );
+}
+
 wss.on('connection', (ws) => {
   console.log('New client connected');
 
   ws.on('message', async (message) => {
     try {
-      const data = JSON.parse(message.toString());
+      const action = JSON.parse(message.toString()) as ActionType;
 
-      switch (data.type) {
+      switch (action.type) {
+        case 'START_GAME':
+          await startGame({ ws, action });
+          break;
         default:
           ws.send(
             JSON.stringify({
@@ -67,4 +110,7 @@ async function run() {
   }
 }
 
-run();
+run().catch((error) => {
+  console.error('Failed to run server:', error);
+  process.exit(1);
+});
