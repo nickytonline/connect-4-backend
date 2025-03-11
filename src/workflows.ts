@@ -1,6 +1,5 @@
 import * as workflow from '@temporalio/workflow';
-import { joinGame, type GameContext, type Player } from './activities';
-import { produce } from 'immer';
+import { joinGame, makeMove, type Move, type GameContext, type Player } from './activities';
 
 export class MaxPlayersError extends Error {
   constructor(message: string) {
@@ -11,10 +10,11 @@ export class MaxPlayersError extends Error {
 
 const joinGameSignal = workflow.defineSignal<[Player]>('joinGame');
 export const getGameContextQuery = workflow.defineQuery<GameContext>('getGameContext');
+const makeMoveSignal = workflow.defineSignal<[Move]>('makeMove');
 
-export function startGame() {
-  const gameContext: GameContext = {
-    gameId: workflow.uuid4(),
+export async function startGame() {
+  let gameContext: GameContext = {
+    // gameId: workflow.uuid4(),
     gameState: {
       players: [],
       isGameOver: false,
@@ -22,25 +22,18 @@ export function startGame() {
     },
   };
 
-  workflow.setHandler(getGameContextQuery, () => gameContext);
+  workflow.setHandler(getGameContextQuery, () => {
+    return gameContext;
+  });
 
   // Register the signal handler
   workflow.setHandler(joinGameSignal, async (player) => {
-    try {
-      console.log(`Player joining: ${player.name} (${player.playerId})`);
-      produce(gameContext, (draft) => {
-        draft.gameState.players.push(player);
-      });
-    } catch (error) {
-      if (error instanceof MaxPlayersError) {
-        console.log(`Failed to add player: ${error.message}`);
-      } else {
-        throw error; // Re-throw other errors
-      }
-    }
+    gameContext = await joinGame({ gameContext, player });
   });
 
-  while (!gameContext.gameState.isGameOver) {
-    await workflow.condition(() => gameContext.gameState.isGameOver);
-  }
+  workflow.setHandler(makeMoveSignal, async (move) => {
+    gameContext = await makeMove({ gameContext, move });
+  });
+
+  await workflow.condition(() => gameContext.gameState.isGameOver);
 }
