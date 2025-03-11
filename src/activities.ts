@@ -7,9 +7,15 @@ interface GameState {
 }
 
 export interface GameContext {
-  gameId: string;
+  // gameId: string;
   gameState: GameState;
   error?: string;
+}
+
+export interface Move {
+  x: number;
+  y: number;
+  playerId: number;
 }
 
 export interface Player {
@@ -28,6 +34,15 @@ export async function joinGame({ gameContext, player }: { gameContext: GameConte
 
   const nextGameContext = produce(gameContext, (draft) => {
     draft.gameState.players.push(player);
+    draft.error = undefined;
+  });
+
+  return nextGameContext;
+}
+
+export async function makeMove({ gameContext, move }: { gameContext: GameContext; move: Move }) {
+  const nextGameContext = produce(gameContext, (draft) => {
+    draft.gameState.board[move.x][move.y] = move.playerId;
   });
 
   return nextGameContext;

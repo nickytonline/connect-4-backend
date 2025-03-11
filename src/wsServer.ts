@@ -2,9 +2,12 @@ import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
 import { Client, Connection } from '@temporalio/client';
 import { TASK_QUEUE_NAME } from './utils';
+import { getGameContextQuery } from './workflows';
 
 const wss = new WebSocketServer({ port: 8080 });
 let temporalClient: Client;
+
+let playerCounter = 0;
 
 async function initializeTemporalClient() {
   const connection = await Connection.connect({
@@ -30,8 +33,10 @@ interface JoinGameAction {
 
 interface MakeMoveAction {
   type: 'MAKE_MOVE';
+  gameId: string;
   x: number;
   y: number;
+  playerId: number;
 }
 
 interface ExplodePieceAction {
@@ -69,16 +74,11 @@ async function joinGame({ ws, action }: { ws: WebSocket; action: JoinGameAction 
   try {
     // Send the join signal first
     await workflowHandle.signal('joinGame', {
-      playerId: crypto.randomUUID(),
+      playerId: ++playerCounter,
       playerName: action.playerName,
     });
 
-    // Try to get the game context with a longer timeout
-    const newGameContext = await workflowHandle.query('getGameContext', undefined, {
-      rpcOptions: {
-        timeoutMillis: 10000, // 10 second timeout
-      },
-    });
+    const newGameContext = await workflowHandle.query(getGameContextQuery);
 
     ws.send(
       JSON.stringify({
@@ -98,6 +98,26 @@ async function joinGame({ ws, action }: { ws: WebSocket; action: JoinGameAction 
   }
 }
 
+async function makeMove({ ws, action }: { ws: WebSocket; action: MakeMoveAction }) {
+  const workflowHandle = await temporalClient.workflow.getHandle(action.gameId);
+
+  if (!workflowHandle) {
+    ws.send(JSON.stringify({ type: 'ERROR', message: 'Game not found' }));
+    return;
+  }
+
+  await workflowHandle.signal('makeMove', {
+    x: action.x,
+    y: action.y,
+    gameId: action.gameId,
+    playerId: action.playerId,
+  });
+
+  const newGameContext = await workflowHandle.query(getGameContextQuery);
+
+  ws.send(JSON.stringify({ type: 'MOVE_MADE', workflowId: action.gameId, context: newGameContext }));
+}
+
 wss.on('connection', (ws) => {
   console.log('New client connected');
 
@@ -111,6 +131,9 @@ wss.on('connection', (ws) => {
           break;
         case 'JOIN_GAME':
           await joinGame({ ws, action });
+          break;
+        case 'MAKE_MOVE':
+          await makeMove({ ws, action });
           break;
         default:
           ws.send(
