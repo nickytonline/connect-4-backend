@@ -29,6 +29,7 @@
     "@temporalio/client": "^1.11.6",
     "@temporalio/worker": "^1.11.6",
     "@temporalio/workflow": "^1.11.6",
+    "immer": "^10.1.1",
     "nanoid": "3.x",
     "ws": "^8.18.1"
   },

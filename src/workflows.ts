@@ -1,5 +1,6 @@
 import * as workflow from '@temporalio/workflow';
 import { joinGame, type GameContext, type Player } from './activities';
+import { produce } from 'immer';
 
 export class MaxPlayersError extends Error {
   constructor(message: string) {
@@ -27,7 +28,9 @@ export function startGame() {
   workflow.setHandler(joinGameSignal, async (player) => {
     try {
       console.log(`Player joining: ${player.name} (${player.playerId})`);
-      Object.assign(gameContext, await joinGame({ gameContext, player }));
+      produce(gameContext, (draft) => {
+        draft.gameState.players.push(player);
+      });
     } catch (error) {
       if (error instanceof MaxPlayersError) {
         console.log(`Failed to add player: ${error.message}`);
@@ -36,4 +39,8 @@ export function startGame() {
       }
     }
   });
+
+  while (!gameContext.gameState.isGameOver) {
+    await workflow.condition(() => gameContext.gameState.isGameOver);
+  }
 }
