@@ -24,6 +24,7 @@ interface StartGameAction {
 
 interface JoinGameAction {
   type: 'JOIN_GAME';
+  gameId: string;
   playerName: string;
 }
 
@@ -42,9 +43,10 @@ interface ExplodePieceAction {
 type ActionType = StartGameAction | JoinGameAction | MakeMoveAction | ExplodePieceAction;
 
 async function startGame({ ws, action }: { ws: WebSocket; action: StartGameAction }) {
-  const handle = await temporalClient.workflow.start('start-game', {
+  const handle = await temporalClient.workflow.start('startGame', {
     taskQueue: TASK_QUEUE_NAME,
     workflowId: action.gameId,
+    args: [],
   });
 
   ws.send(
@@ -53,6 +55,47 @@ async function startGame({ ws, action }: { ws: WebSocket; action: StartGameActio
       workflowId: handle.workflowId,
     }),
   );
+}
+
+async function joinGame({ ws, action }: { ws: WebSocket; action: JoinGameAction }) {
+  // get existing workflow handle based on gameId
+  const workflowHandle = await temporalClient.workflow.getHandle(action.gameId);
+
+  if (!workflowHandle) {
+    ws.send(JSON.stringify({ type: 'ERROR', message: 'Game not found' }));
+    return;
+  }
+
+  try {
+    // Send the join signal first
+    await workflowHandle.signal('joinGame', {
+      playerId: crypto.randomUUID(),
+      playerName: action.playerName,
+    });
+
+    // Try to get the game context with a longer timeout
+    const newGameContext = await workflowHandle.query('getGameContext', undefined, {
+      rpcOptions: {
+        timeoutMillis: 10000, // 10 second timeout
+      },
+    });
+
+    ws.send(
+      JSON.stringify({
+        type: 'PLAYER_ADDED',
+        workflowId: action.gameId,
+        context: newGameContext,
+      }),
+    );
+  } catch (error) {
+    console.error('Error in joinGame:', error);
+    ws.send(
+      JSON.stringify({
+        type: 'ERROR',
+        message: error instanceof Error ? error.message : 'Failed to join game',
+      }),
+    );
+  }
 }
 
 wss.on('connection', (ws) => {
@@ -65,6 +108,9 @@ wss.on('connection', (ws) => {
       switch (action.type) {
         case 'START_GAME':
           await startGame({ ws, action });
+          break;
+        case 'JOIN_GAME':
+          await joinGame({ ws, action });
           break;
         default:
           ws.send(
